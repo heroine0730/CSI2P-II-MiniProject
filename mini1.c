@@ -483,23 +483,35 @@ int codegen(AST *root, int DI) {
 			// return:		the identifier
 			m_result = codegen(root->mid, DI);
 			printf("add r%d r%d 1\n", m_result, m_result);
+			if(m_result == 1) xc = 1;
+			if(m_result == 2) yc = 1;
+			if(m_result == 3) zc = 1;
 			return m_result;
 		break;
 		case PREDEC:
 			// similar to PREINC
 			m_result = codegen(root->mid, DI);
 			printf("sub r%d r%d 1\n", m_result, m_result);
+			if(m_result == 1) xc = 1;
+			if(m_result == 2) yc = 1;
+			if(m_result == 3) zc = 1;
 			return m_result;
 		break;
 		case POSTINC:
 			// similar to PREINC
 			m_result = codegen(root->mid, DI);
+			if(m_result == 1) xc = 1;
+			if(m_result == 2) yc = 1;
+			if(m_result == 3) zc = 1;
 			printf("add r%d r%d 1\n", m_result, m_result);
 			return m_result;
 		break;
 		case POSTDEC:
 			// similar to PREINC
 			m_result = codegen(root->mid, DI);
+			if(m_result == 1) xc = 1;
+			if(m_result == 2) yc = 1;
+			if(m_result == 3) zc = 1;
 			printf("sub r%d r%d 1\n", m_result, m_result);
 			return m_result;
 		break;
@@ -512,17 +524,17 @@ int codegen(AST *root, int DI) {
 			}
 			// load the identifier from memory to reg
 			if((char)((root->val)) == 'x'){
-				if(regUsed[1]==1) return 1;
+				if((xc==1)||(regUsed[1]==1)) return 1;
 				printf("load r1 [0]\n");
 				regUsed[1] = 1;
 				return 1;
 			}else if((char)((root->val)) == 'y'){
-				if(regUsed[2]==1) return 2;
+				if((yc==1)||(regUsed[2]==1)) return 2;
 				printf("load r2 [4]\n");
 				regUsed[2] = 1;
 				return 2;
 			}else{
-				if(regUsed[3]==1) return 3;
+				if((zc==1)||(regUsed[3]==1)) return 3;
 				printf("load r3 [8]\n");
 				regUsed[3] = 1;
 				return 3;
@@ -544,7 +556,9 @@ int codegen(AST *root, int DI) {
 		case MINUS:
 			i = codegen(root->mid, DI);
 			printf("sub r%d 0 r%d\n", regUsedMax, i);
-			return i;
+			regUsed[regUsedMax] = 1;
+			regUsedMax++;
+			return regUsedMax-1;
 		break;
 		default:
 			err("Undefined codegen.");
