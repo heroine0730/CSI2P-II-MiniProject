@@ -498,22 +498,28 @@ int codegen(AST *root, int DI) {
 			return m_result;
 		break;
 		case POSTINC:
-			// similar to PREINC
+			// increase after the expression
 			m_result = codegen(root->mid, DI);
+			printf("add r%d r%d 0\n", regUsedMax, m_result);
+			regUsed[regUsedMax] = 1;
+			regUsedMax++;
+			printf("add r%d r%d 1\n", m_result, m_result);
 			if(m_result == 1) xc = 1;
 			if(m_result == 2) yc = 1;
 			if(m_result == 3) zc = 1;
-			printf("add r%d r%d 1\n", m_result, m_result);
-			return m_result;
+			return regUsedMax-1;
 		break;
 		case POSTDEC:
-			// similar to PREINC
+			// similar to POSTINC
 			m_result = codegen(root->mid, DI);
+			printf("add r%d r%d 0\n", regUsedMax, m_result);
+			regUsed[regUsedMax] = 1;
+			regUsedMax++;
+			printf("sub r%d r%d 1\n", m_result, m_result);
 			if(m_result == 1) xc = 1;
 			if(m_result == 2) yc = 1;
 			if(m_result == 3) zc = 1;
-			printf("sub r%d r%d 1\n", m_result, m_result);
-			return m_result;
+			return regUsedMax-1;
 		break;
 		case IDENTIFIER:
 			if(DI == 1){ // left
