@@ -64,7 +64,9 @@ int condRPAR(Kind kind);
 // Check if the AST is semantically right. This function will call err() automatically if check failed.
 void semantic_check(AST *now);
 // Generate ASM code.
-void codegen(AST *root);
+int codegen(AST *root, int DI);
+int regUsed[256];
+int regUsedMax;
 // Free the whole AST.
 void freeAST(AST *now);
 
@@ -78,16 +80,29 @@ void AST_print(AST *head);
 char input[MAX_LENGTH];
 
 int main() {
+	for(int i=0; i<256; i++){
+		regUsed[i] = 0;
+	}
 	while (fgets(input, MAX_LENGTH, stdin) != NULL) {
+		regUsedMax = 4;
 		Token *content = lexer(input);
 		size_t len = token_list_to_arr(&content);
 		if (len == 0) continue;
+
 		AST *ast_root = parser(content, len);
 		semantic_check(ast_root);
-		codegen(ast_root);
+		AST_print(ast_root);
+
+		codegen(ast_root, 0);
 		free(content);
 		freeAST(ast_root);
+		// clear regUsed[4]~
+		for(int i=4; i<=regUsedMax; i++) regUsed[i] = 0;
 	}
+	// store the varible values to mem in the end
+	if(regUsed[1]) printf("store [0] r1\n");
+	if(regUsed[2]) printf("store [4] r2\n");
+	if(regUsed[3]) printf("store [8] r3\n");
 	return 0;
 }
 
@@ -189,10 +204,12 @@ AST *parser(Token *arr, size_t len) {
 			}
 		}
 	}
+	token_print(arr, len);
 	return parse(arr, 0, len - 1, STMT);
 }
 
 AST *parse(Token *arr, int l, int r, GrammarState S) {
+	// printf("Grammar state: %d, kind: %d\n", S, arr[l].kind);
 	AST *now = NULL;
 	if (l > r)
 		err("Unexpected parsing range.");
@@ -235,16 +252,15 @@ AST *parse(Token *arr, int l, int r, GrammarState S) {
 		case UNARY_EXPR:
 			// TODO: Implement UNARY_EXPR.
 			// hint: Take POSTFIX_EXPR as reference.
-			if (arr[r].kind == PREINC || arr[r].kind == PREDEC || 
-				arr[r].kind == PLUS || arr[r].kind == MINUS) {
-				now = new_AST(arr[r].kind, 0);
+			if ((arr[l].kind == PREINC) || (arr[l].kind == PREDEC) || (arr[l].kind == PLUS) || (arr[l].kind == MINUS)) {
+				now = new_AST(arr[l].kind, 0);
 				now->mid = parse(arr, l+1, r, UNARY_EXPR);
 				return now;
 			}
 			return parse(arr, l, r, POSTFIX_EXPR);
 		case POSTFIX_EXPR:
 			if (arr[r].kind == PREINC || arr[r].kind == PREDEC) {
-				// translate "PREINC", "PREDEC" into "POSTINC", "POSTDEC" ->為了簡化解讀的程序
+				// translate "PREINC", "PREDEC" into "POSTINC", "POSTDEC"
 				now = new_AST(arr[r].kind - PREINC + POSTINC, 0);
 				now->mid = parse(arr, l, r - 1, POSTFIX_EXPR);
 				return now;
@@ -265,6 +281,7 @@ AST *parse(Token *arr, int l, int r, GrammarState S) {
 		default:
 			err("Unexpected grammar state.");
 	}
+	AST_print(now);
 }
 
 AST *new_AST(Kind kind, int val) {
@@ -308,18 +325,221 @@ void semantic_check(AST *now) {
 	if (now->kind == ASSIGN) {
 		AST *tmp = now->lhs;
 		while (tmp->kind == LPAR) tmp = tmp->mid;
-		if (tmp->kind != IDENTIFIER)
+		if (tmp->kind != IDENTIFIER){
 			err("Lvalue is required as left operand of assignment.");
+		}else{
+			// 直接把去除括號的id放在now的左子樹下
+			now->lhs = tmp;
+		}
 	}
 	// Operand of INC/DEC must be an identifier or identifier with one or more parentheses.
 	// TODO: Implement the remaining semantic_check code.
 	// hint: Follow the instruction above and ASSIGN-part code to implement.
 	// hint: Semantic of each node needs to be checked recursively (from the current node to lhs/mid/rhs node).
+	if ((now->kind == PREINC)||(now->kind == POSTINC)||(now->kind == PREDEC)||(now->kind == POSTDEC)) {
+		AST *tmp = now->mid;
+		while (tmp->kind == LPAR) tmp = tmp->mid;
+		if (tmp->kind != IDENTIFIER){
+			err("Operand of INC/DEC must be an identifier.");
+		} else {
+			// 直接把去除括號的id放在now的中子樹下
+			now->mid = tmp;
+		}
+	}
+	semantic_check(now->lhs);
+	semantic_check(now->mid);
+	semantic_check(now->rhs);
 }
 
-void codegen(AST *root) {
+// Goals:
+// 1. go through the AST
+// 2. print out the assembly code
+// 3. return the register index that stores the return value
+// Store 	[x] in r1
+//			[y] in r2
+//			[z] in r3
+// Description for Identifier:
+// 在assign之前不能動到Identifier的值
+// 0 -> not identifier
+// 1 -> 'l'= ''
+// 2 -> '' = 'r'
+int codegen(AST *root, int DI) {
 	// TODO: Implement your codegen in your own way.
 	// You may modify the function parameter or the return type, even the whole structure as you wish.
+	if (root == NULL) return 0;
+	int l_result, r_result, m_result;
+	int i;
+	// v ASSIGN, 
+	// v ADD, SUB, MUL, DIV, REM, 
+	// v PREINC, PREDEC, 
+	// v POSTINC, POSTDEC, 
+	// v IDENTIFIER, CONSTANT, 
+	// v LPAR, RPAR, 
+	// v PLUS, MINUS, 
+	// END(no this case)
+	switch (root->kind) {
+		case ASSIGN:
+			// l_result: 	directly find the identifier register
+			// r_result: 	the register returned
+			// return:		the identifier register
+			r_result = codegen(root->rhs, 2);
+			l_result = codegen(root->lhs, 1);
+			printf("add r%d 0 r%d\n", l_result, r_result);
+			regUsed[r_result] = 0;
+			regUsed[l_result] = 1;
+			return l_result;
+		break;
+		case ADD:
+			// l_result: 	the register returned
+			// r_result:	the register returned
+			// return:		the left register to save the usage of the registers,
+			//				and make the right register available.
+			l_result = codegen(root->lhs, DI);
+			r_result = codegen(root->rhs, DI);
+			if((l_result<=3)||(r_result<=3)){
+				printf("add r%d r%d r%d\n", regUsedMax, l_result, r_result);
+				regUsedMax++;
+				return regUsedMax-1;
+			}
+			else{
+				printf("add r%d r%d r%d\n", l_result, l_result, r_result);
+				regUsed[r_result] = 0;
+				return l_result;
+			}
+		break;
+		case SUB:
+			// similar to case ADD
+			l_result = codegen(root->lhs, DI);
+			r_result = codegen(root->rhs, DI);
+			if((l_result<=3)||(r_result<=3)){
+				printf("sub r%d r%d r%d\n", regUsedMax, l_result, r_result);
+				regUsedMax++;
+				return regUsedMax-1;
+			}
+			else{
+				printf("sub r%d r%d r%d\n", l_result, l_result, r_result);
+				regUsed[r_result] = 0;
+				return l_result;
+			}
+		break;
+		case MUL:
+			// similar to case ADD
+			l_result = codegen(root->lhs, DI);
+			r_result = codegen(root->rhs, DI);
+			if((l_result<=3)||(r_result<=3)){
+				printf("mul r%d r%d r%d\n", regUsedMax, l_result, r_result);
+				regUsedMax++;
+				return regUsedMax-1;
+			}
+			else{
+				printf("mul r%d r%d r%d\n", l_result, l_result, r_result);
+				regUsed[r_result] = 0;
+				return l_result;
+			}
+		break;
+		case DIV:
+			// similar to case ADD
+			l_result = codegen(root->lhs, DI);
+			r_result = codegen(root->rhs, DI);
+			if((l_result<=3)||(r_result<=3)){
+				printf("div r%d r%d r%d\n", regUsedMax, l_result, r_result);
+				regUsedMax++;
+				return regUsedMax-1;
+			}
+			else{
+				printf("div r%d r%d r%d\n", l_result, l_result, r_result);
+				regUsed[r_result] = 0;
+				return l_result;
+			}
+		break;
+		case REM:
+			// similar to case ADD
+			l_result = codegen(root->lhs, DI);
+			r_result = codegen(root->rhs, DI);
+			if((l_result<=3)||(r_result<=3)){
+				printf("rem r%d r%d r%d\n", regUsedMax, l_result, r_result);
+				regUsedMax++;
+				return regUsedMax-1;
+			}
+			else{
+				printf("rem r%d r%d r%d\n", l_result, l_result, r_result);
+				regUsed[r_result] = 0;
+				return l_result;
+			}
+		break;
+		case PREINC:
+			// m_result:	the identifier returned
+			// return:		the identifier
+			m_result = codegen(root->mid, DI);
+			printf("add r%d r%d 1\n", m_result, m_result);
+			return m_result;
+		break;
+		case PREDEC:
+			// similar to PREINC
+			m_result = codegen(root->mid, DI);
+			printf("sub r%d r%d 1\n", m_result, m_result);
+			return m_result;
+		break;
+		case POSTINC:
+			// similar to PREINC
+			m_result = codegen(root->mid, DI);
+			printf("add r%d r%d 1\n", m_result, m_result);
+			return m_result;
+		break;
+		case POSTDEC:
+			// similar to PREINC
+			m_result = codegen(root->mid, DI);
+			printf("sub r%d r%d 1\n", m_result, m_result);
+			return m_result;
+		break;
+		case IDENTIFIER:
+			if(DI == 1){ // left
+				// nothing to do
+				if((char)((root->val)) == 'x') return 1;
+				else if((char)((root->val)) == 'y') return 2;
+				else if((char)((root->val)) == 'z') return 3;
+			}
+			// load the identifier from memory to reg
+			if((char)((root->val)) == 'x'){
+				if(regUsed[1]==1) return 1;
+				printf("load r1 [0]\n");
+				regUsed[1] = 1;
+				return 1;
+			}else if((char)((root->val)) == 'y'){
+				if(regUsed[2]==1) return 2;
+				printf("load r2 [4]\n");
+				regUsed[2] = 1;
+				return 2;
+			}else{
+				if(regUsed[3]==1) return 3;
+				printf("load r3 [8]\n");
+				regUsed[3] = 1;
+				return 3;
+			}
+		break;
+		case CONSTANT:
+			i = 4;
+			while(regUsed[i] == 1) i++;
+			printf("add r%d 0 %d\n", i, root->val);
+			regUsed[i] = 1;
+			return i;
+		break;
+		case LPAR:	// won't appear RPAR
+			return codegen(root->mid, DI);
+		break;
+		case PLUS:
+			return codegen(root->mid, DI);
+		break;
+		case MINUS:
+			i = codegen(root->mid, DI);
+			printf("sub r%d 0 r%d\n", regUsedMax, i);
+			return i;
+		break;
+		default:
+			err("Undefined codegen.");
+		break;
+	}
+
 }
 
 void freeAST(AST *now) {
